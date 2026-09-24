@@ -2,10 +2,11 @@
 #include "ESP32WebRTC.h"
 #include <driver/i2s_std.h>
 namespace arduino_webrtc {
-// Philips I2S, 32-bit slots. Shares BCLK/WS between mic and amp.
+// Philips I2S, 32-bit slots. Shares BCLK/WS between mic and amp unless
+// micBclk/micWs are set, which puts the mic on its own I2S controller.
 class WebRTCI2S : public AudioIO {
 public:
-    struct Pins { int bclk = 4, ws = 5, din = 6, dout = 7; bool rightMic = false; };
+    struct Pins { int bclk = 4, ws = 5, din = 6, dout = 7, micBclk = -1, micWs = -1; bool rightMic = false; };
     ~WebRTCI2S() override { end(); }
     WebRTCI2S() = default;
     WebRTCI2S(const WebRTCI2S&) = delete;

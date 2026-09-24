@@ -44,7 +44,9 @@ class Handler(SimpleHTTPRequestHandler):
                 self.send_header('Content-Length', str(len(data)))
                 self.send_header('Cache-Control', 'no-store')
                 self.end_headers(); self.wfile.write(data)
-        except HTTPError as error: self.send_error(error.code, 'Board rejected request')
+        except HTTPError as error:
+            detail = error.read(512).decode(errors='replace').strip() or 'Board rejected request'
+            self.send_error(error.code, detail)
         except (URLError, TimeoutError, OSError): self.send_error(502, 'Cannot reach ESP32')
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)

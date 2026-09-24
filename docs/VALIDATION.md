@@ -15,7 +15,16 @@
 - SDP fingerprint parsing, malformed/missing fingerprints, embedded NUL rejection, and conflicting fingerprints.
 - JavaScript syntax and Python syntax checks for the browser demo.
 
-Build sizes are compile-time snapshots, not runtime memory measurements. No microphone, amplifier, ESP32, TURN service, or browser-to-device call was available for end-to-end qualification.
+Build sizes are compile-time snapshots, not runtime memory measurements.
+
+## Hardware results (ESP32-S3-WROOM, no PSRAM, INMP441-style mic and MAX98357-style amp on separate I2S buses)
+
+- `CodecSelfTest`: PASS at 16/24/48 kHz; maximum encode time 3.0–4.3 ms and decode time 1.1–1.9 ms per 20 ms frame; about 252–261 KB internal heap free.
+- Chrome → board over the board's own SoftAP: two-way audio, no audible artifacts reported.
+- Board → OpenAI `gpt-realtime` and `gpt-live-1` over an iPhone hotspot: HTTPS offer exchange, ICE, DTLS client role and SRTP working; calls of about 1.5–2.5 minutes. About 1–2% of outgoing frames dropped, no decode errors, minimum internal heap 36–40 KB at 48 kbit/s / complexity 0.
+- 64 kbit/s at complexity 5 exceeded the 20 ms encode budget after about 20 s under network load (max encode 21 ms, heap minimum 6 KB). It is not recommended without PSRAM.
+
+Bugs found by these runs and fixed: a non-null ICE server list with zero entries was rejected by `esp_peer` (every STUN-less call failed); a 10 ms ICE receive timeout broke DTLS over WAN round trips; the ICE candidate limit of 4 dropped OpenAI's 6 candidates; and allocating the codec before the 40 KB capture stack fragmented the heap. The `oai-events` data channel is negotiated, but no events were observed during the GPT-Live test, so it is unconfirmed. TURN, standard ESP32, and long soak tests remain untested.
 
 ## Hardware acceptance procedure
 

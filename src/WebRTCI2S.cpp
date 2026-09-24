@@ -8,7 +8,9 @@ bool WebRTCI2S::begin(const Pins& p, uint32_t rate) {
     chan.dma_desc_num = 4;
     chan.dma_frame_num = rate / 200; // Four 5 ms DMA blocks per direction, internal RAM
     chan.auto_clear = true;
-    if (i2s_new_channel(&chan, &tx_, &rx_) != ESP_OK) { end(); return false; }
+    bool split = p.micBclk >= 0 && p.micWs >= 0;
+    if (split ? (i2s_new_channel(&chan, &tx_, nullptr) != ESP_OK || i2s_new_channel(&chan, nullptr, &rx_) != ESP_OK)
+              : i2s_new_channel(&chan, &tx_, &rx_) != ESP_OK) { end(); return false; }
     i2s_std_config_t cfg{};
     cfg.clk_cfg.sample_rate_hz = rate;
     cfg.clk_cfg.clk_src = I2S_CLK_SRC_DEFAULT;
@@ -17,10 +19,16 @@ bool WebRTCI2S::begin(const Pins& p, uint32_t rate) {
     cfg.gpio_cfg.mclk = I2S_GPIO_UNUSED;
     cfg.gpio_cfg.bclk = static_cast<gpio_num_t>(p.bclk);
     cfg.gpio_cfg.ws = static_cast<gpio_num_t>(p.ws);
-    cfg.gpio_cfg.din = static_cast<gpio_num_t>(p.din);
+    cfg.gpio_cfg.din = split ? I2S_GPIO_UNUSED : static_cast<gpio_num_t>(p.din);
     cfg.gpio_cfg.dout = static_cast<gpio_num_t>(p.dout);
-    if (i2s_channel_init_std_mode(tx_, &cfg) != ESP_OK ||
-        i2s_channel_init_std_mode(rx_, &cfg) != ESP_OK) { end(); return false; }
+    if (i2s_channel_init_std_mode(tx_, &cfg) != ESP_OK) { end(); return false; }
+    if (split) {
+        cfg.gpio_cfg.bclk = static_cast<gpio_num_t>(p.micBclk);
+        cfg.gpio_cfg.ws = static_cast<gpio_num_t>(p.micWs);
+        cfg.gpio_cfg.din = static_cast<gpio_num_t>(p.din);
+        cfg.gpio_cfg.dout = I2S_GPIO_UNUSED;
+    }
+    if (i2s_channel_init_std_mode(rx_, &cfg) != ESP_OK) { end(); return false; }
     if (i2s_channel_enable(tx_) != ESP_OK) { end(); return false; }
     txEnabled_ = true;
     if (i2s_channel_enable(rx_) != ESP_OK) { end(); return false; }

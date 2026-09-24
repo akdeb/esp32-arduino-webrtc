@@ -1,8 +1,8 @@
 # ESP32 Arduino WebRTC
 
-An experimental, self-contained Arduino library for **two-way WebRTC audio on ESP32 and ESP32-S3**, with I2S microphone input and speaker output. Designed to run without PSRAM. Includes a browser calling example.
+An experimental, self-contained Arduino library for **two-way WebRTC audio on ESP32 and ESP32-S3**, with I2S microphone input and speaker output. Designed to run without PSRAM. Includes a browser calling example and a direct **OpenAI Realtime / GPT-Live** voice example.
 
-**Version 0.2 is a build-tested prototype, not a hardware-qualified stable release.** No board was connected during development. A successful compile does not establish the runtime heap budget, browser interoperability, or long-call audio stability. See [validation](docs/VALIDATION.md).
+**This is an early prototype, not a qualified stable release.** It has been run on one ESP32-S3-WROOM board without PSRAM: LAN calls with Chrome, and multi-minute calls straight to OpenAI (`gpt-realtime` and `gpt-live-1`) over a phone hotspot. Standard ESP32, other browsers, TURN, and long soak tests are untested. See [validation](docs/VALIDATION.md).
 
 ## What is included
 
@@ -18,8 +18,12 @@ An experimental, self-contained Arduino library for **two-way WebRTC audio on ES
 - A three-frame transmit queue that discards stale audio instead of allowing latency to grow indefinitely.
 - Rate-sized internal-RAM application buffers, microphone mute, and memory/drop/error/codec-timing counters.
 - Compressed receive packets are decoded on the playback task; the peer callback only copies them into a bounded queue.
+- The codec, PCM buffers and audio tasks are allocated when the remote SDP arrives, so HTTPS signaling (about 40 KB of TLS) fits in the heap while the offer is exchanged.
+- An optional SCTP **data channel** (`Config.dataChannel` / `onData`) with small caches, used for OpenAI's `oai-events` channel.
+- An optional half-duplex **echo gate** (`Config.echoGateMs`) that sends silence while the speaker is playing, for boards without AEC.
+- Separate microphone and speaker I2S buses (`Pins.micBclk` / `micWs`), for boards that wire them independently.
 
-This release does **not** include device-side acoustic echo cancellation, video, or a data-channel API. Opus FEC and DTX are disabled; missing playback samples fade toward silence. Use headphones, low speaker volume, or microphone mute to avoid acoustic feedback. Opus improves bandwidth/quality but uses significantly more CPU, heap, and stack than G.711.
+This release does **not** include device-side acoustic echo cancellation or video. Opus FEC and DTX are disabled; missing playback samples fade toward silence. Without the echo gate, use headphones, low speaker volume, or microphone mute to avoid acoustic feedback. Opus improves bandwidth/quality but uses significantly more CPU, heap, and stack than G.711.
 
 ## Arduino IDE
 
@@ -68,6 +72,8 @@ The example uses Philips I2S with **32-bit stereo slots**, converting the select
 | DIN | GPIO 6 | GPIO 33 | Microphone SD → ESP32 |
 | DOUT | GPIO 7 | GPIO 22 | ESP32 → amplifier DIN |
 
+If the microphone and amplifier have their own clocks, set `pins.micBclk` and `pins.micWs`; the microphone then runs on a second I2S controller with `pins.din`, and the amplifier keeps `bclk`/`ws`/`dout`. The examples accept `-DWEBRTC_PINS=bclk,ws,din,dout`, `-DWEBRTC_MIC_CLOCK_PINS=bclk,ws` and `-DWEBRTC_AMP_ENABLE_PIN=n` build flags (see the `esp32s3_elato*` environments in `platformio.ini`).
+
 Set the microphone L/R select for the left slot, or set `pins.rightMic = true`. Check your board's schematic before using these GPIOs. PDM microphones and boards with an I2C-controlled codec need a different `AudioIO` implementation or codec initialization.
 
 ## Make a browser call
@@ -82,9 +88,34 @@ Set the microphone L/R select for the left slot, or set `pins.rightMic = true`. 
 
 4. Open **http://localhost:8080**, allow microphone access, then select **Start call**.
 
+No usable Wi-Fi (for example an office network with client isolation)? Build with `-DWEBRTC_SOFTAP=1`: the board hosts its own network, `esp32-webrtc` / `webrtc1234` by default (`WEBRTC_AP_SSID`, `WEBRTC_AP_PASSWORD`). Join it from the computer and run `python3 tools/demo_server.py --board 192.168.4.1`. The computer has no internet while joined.
+
 The localhost bridge carries SDP and statistics over HTTP. **Audio travels directly between the browser and ESP32 over WebRTC**, not through Python or WebSockets. The browser reads `/config`, selects Opus or PCMU to match the firmware, and includes the requested PCM bandwidth and bitrate preferences in the Opus SDP. Browser hardware capture may use a different native sample rate; the ESP32 decoder produces the configured local rate. Python needs no third-party packages.
 
 The demo uses an unauthenticated LAN-only HTTP signaling endpoint. It is a development example; for a deployed device, supply authenticated signaling. The library accepts SDP and ICE candidates from your existing HTTP, MQTT, or WebSocket signaling service. STUN/TURN settings are available in `Config`; cross-network behavior and UDP TURN have not been tested in this release. TURNS is not exposed by this wrapper because a TURN CA configuration API is not yet provided.
+
+## Call OpenAI directly
+
+`examples/OpenAIRealtime` is a voice call from the board straight to OpenAI, with no computer or relay. The board creates the SDP offer, POSTs it to OpenAI over HTTPS, and applies the answer; audio then flows over WebRTC between the board and OpenAI's media servers. No STUN server is needed because OpenAI's servers have public addresses.
+
+| Model | Endpoint | Notes |
+|---|---|---|
+| `gpt-live-1` (default) | `POST /v1/live/sessions`, JSON | Opens the `oai-events` data channel; event types print to Serial |
+| `gpt-realtime` | `POST /v1/realtime/calls`, multipart | Voice is set with `OPENAI_VOICE` |
+
+Set Wi-Fi and the key at build time; they come from the environment and are not written to any file:
+
+```sh
+PLATFORMIO_SRC_DIR=examples/OpenAIRealtime \
+WIFI_SSID="my network" WIFI_PASSWORD="..." OPENAI_API_KEY="sk-..." \
+pio run -e esp32s3_elato_openai -t upload
+```
+
+Use `PLATFORMIO_BUILD_FLAGS='-DOPENAI_MODEL=\"gpt-realtime\"'` to select the other API. In the Arduino IDE, define `WEBRTC_WIFI_SSID`, `WEBRTC_WIFI_PASSWORD` and `OPENAI_API_KEY` at the top of the sketch instead. The board calls on boot; send `c` over Serial to call again and `s` to hang up.
+
+**This is a development example.** The API key is compiled into the firmware, so anyone with the device can read it, and TLS skips certificate verification. For a product, have your server create the session (or a short-lived client secret) and give the board only that.
+
+The example uses 24 kHz Opus at 48 kbit/s, complexity 0, which is OpenAI's native rate. 48 kHz adds RAM without adding quality. 64 kbit/s at complexity 5 was measured to overrun the 20 ms encode budget under Wi-Fi load. The echo gate is on (400 ms), so the assistant cannot hear itself; the trade-off is that you cannot interrupt it while it speaks.
 
 ## Audio rate and quality
 
@@ -169,9 +200,11 @@ The implementation has no mandatory PSRAM allocation, and firmware builds are ch
 
 Watch `/stats` and the browser's statistics panel during calls. Check `freeInternalHeap`, `minInternalHeap`, `captureErrors`, `playbackErrors`, `txDrops`, and `missingSamples`. Zero I/O errors in a quiet LAN test is the first audio-health check. For Opus, also inspect `encodeErrors`, `decodeErrors`, `maxEncodeUs`, `maxDecodeUs`, and `encodeOverruns`; sustained encode times above 20,000 µs cannot keep up with 20 ms frames. `missingSamples` is a sample count, not a packet count. Long clock drift is bounded by occasional rebuffering; this version does not resample to correct independent device clocks.
 
+Measured on an ESP32-S3-WROOM without PSRAM, calling OpenAI at 24 kHz / 48 kbit/s / complexity 0 over a phone hotspot: about 174 KB internal heap free with the largest free block about 104 KB during the HTTPS offer exchange, then about 48 KB free during the call with a minimum of 36–40 KB; maximum encode time about 4.8 ms per 20 ms frame; and about 2% of outgoing frames dropped.
+
 Keep Wi-Fi power saving off, avoid flash writes during calls, and start with other services disabled. Opus uses a 40 KB capture/encoder stack, following Espressif's example, plus a 16 KB decode/playback stack and 10 KB peer stack. Codec state, Wi-Fi, DTLS, queues, I2S DMA, and PCM storage are additional allocations. The 200 ms PCM timeline uses about 10.2 KB at 24 kHz and 20.4 KB at 48 kHz. Optional PSRAM can provide heap headroom where the core permits it; task stacks and wrapper audio buffers stay internal.
 
-Upload **Examples → ESP32 Arduino WebRTC → CodecSelfTest** to run the actual Espressif encoder and decoder at all three rates on your board. It reports timing, output validity, free internal heap, and stack watermark. This test uses a tone and needs no microphone or amplifier; it does not include Wi-Fi, DTLS, or I2S load. Run the browser soak test afterwards.
+Upload **Examples → ESP32 Arduino WebRTC → CodecSelfTest** to run the actual Espressif encoder and decoder at all three rates on your board. It reports timing, output validity, free internal heap, and stack watermark. This test uses a tone and needs no microphone or amplifier; it does not include Wi-Fi, DTLS, or I2S load. Run the browser soak test afterwards. `BrowserAudio` also accepts `t` over Serial, which opens and closes a peer without a browser and prints the result and heap. This helps diagnose `/offer` failures.
 
 ## Development
 

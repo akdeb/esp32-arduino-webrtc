@@ -68,6 +68,7 @@ struct ESP32WebRTC::Impl {
     std::atomic<uint32_t> maxEncodeUs{0}, maxDecodeUs{0}, encodeOverruns{0};
     std::atomic<uint32_t> missing{0}, late{0}, resyncs{0};
     std::atomic<bool> playbackReset{false};
+    std::atomic<int64_t> lastAudibleUs{0}; // playback time of the last frame above the echo-gate level
     AudioCodec codec;
     void* playoutMemory = nullptr;
     int16_t* capturePcm = nullptr;
@@ -75,6 +76,39 @@ struct ESP32WebRTC::Impl {
     int16_t* decodePcm = nullptr;
     PlayoutBuffer playout;
     bool codecAccepted = true;
+    char* channelLabel = nullptr;
+    bool channelRequested = false;
+    EventBits_t mediaTasks = 0; // owned by peerTask
+    // Codec, PCM buffers and audio tasks start when the remote SDP arrives, so signaling
+    // (for example an HTTPS offer exchange) has that heap while the offer is being sent, and
+    // the large task stacks are allocated before ICE/DTLS/SRTP fragment the heap.
+    bool startMedia() {
+        const auto caps=MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT;
+        const size_t pcmBytes=config.audio.frameSamples()*sizeof(int16_t);
+        playoutMemory=heap_caps_calloc(1,PlayoutBuffer::storageBytes(config.audio.sampleRate),caps);
+        capturePcm=static_cast<int16_t*>(heap_caps_malloc(pcmBytes,caps));
+        playbackPcm=static_cast<int16_t*>(heap_caps_malloc(pcmBytes,caps));
+        decodePcm=static_cast<int16_t*>(heap_caps_malloc(config.audio.maxDecodeSamples()*sizeof(int16_t),caps));
+        if(!playoutMemory || !capturePcm || !playbackPcm || !decodePcm ||
+           !playout.init(config.audio.sampleRate,playoutMemory,PlayoutBuffer::storageBytes(config.audio.sampleRate),config.prefillMs)) {
+            error=ESP_PEER_ERR_NO_MEM; return false;
+        }
+        const bool opus=config.audio.codec==AudioCodecType::Opus;
+        struct Worker { TaskFunction_t fn; const char* name; uint32_t stack; UBaseType_t priority; EventBits_t bit; };
+        // Leave Wi-Fi on core 0 and audio on core 1 on both supported dual-core chips.
+        Worker tasks[] = {{captureTask,"rtc_capture",opus ? 40960u : 6144u,6,CAPTURE_DONE},
+                          {playbackTask,"rtc_play",opus ? 16384u : 6144u,7,PLAY_DONE}};
+        for (auto& task : tasks) {
+            if (xTaskCreatePinnedToCore(task.fn, task.name, task.stack, this, task.priority, nullptr, 1) != pdPASS) {
+                error=ESP_PEER_ERR_NO_MEM; return false;
+            }
+            mediaTasks |= task.bit;
+        }
+        // Open the codec after the stacks: Opus state fragments the heap, and the 40 KB capture
+        // stack needs one contiguous block. No packets arrive before the remote SDP is applied.
+        if(!codec.begin(config.audio)){error=codec.lastOpenError();return false;}
+        return true;
+    }
     static int onState(esp_peer_state_t status, void* context) {
         auto& self = *static_cast<Impl*>(context);
         if (status == ESP_PEER_STATE_CONNECTED) self.state = self.codecAccepted ? State::Connected : State::Failed;
@@ -122,6 +156,12 @@ struct ESP32WebRTC::Impl {
         ++self.received;
         return 0;
     }
+    static int onData(esp_peer_data_frame_t* frame, void* context) {
+        auto& self = *static_cast<Impl*>(context);
+        if (self.config.onData && frame->data && frame->size > 0)
+            self.config.onData(frame->data, frame->size, frame->type == ESP_PEER_DATA_CHANNEL_STRING, self.config.context);
+        return 0;
+    }
     static void peerTask(void* context) {
         auto& self = *static_cast<Impl*>(context);
         int rc = esp_peer_new_connection(self.peer);
@@ -136,6 +176,7 @@ struct ESP32WebRTC::Impl {
                         self.error = ESP_PEER_ERR_BAD_DATA; self.state = State::Failed;
                         free(msg.data); continue;
                     }
+                    if (!self.mediaTasks && !self.startMedia()) { self.state = State::Failed; free(msg.data); continue; }
                 }
                 esp_peer_msg_t input{};
                 input.type = msg.type == SignalType::SDP ? ESP_PEER_MSG_TYPE_SDP : ESP_PEER_MSG_TYPE_CANDIDATE;
@@ -146,6 +187,12 @@ struct ESP32WebRTC::Impl {
             }
             rc = esp_peer_main_loop(self.peer);
             if (rc) self.error = rc;
+            if (self.channelLabel && !self.channelRequested && self.state == State::Connected) {
+                esp_peer_data_channel_cfg_t channel{};
+                channel.type = ESP_PEER_DATA_CHANNEL_RELIABLE; channel.ordered = true; channel.label = self.channelLabel;
+                // SCTP comes up just after DTLS; retry on later iterations until the association accepts it.
+                self.channelRequested = esp_peer_create_data_channel(self.peer, &channel) == ESP_PEER_ERR_NONE;
+            }
             TxFrame frame{};
             for (unsigned n = 0; n < 3 && xQueueReceive(self.tx, &frame, 0) == pdTRUE; ++n) {
                 if (self.state != State::Connected || esp_timer_get_time() - frame.captured > 80000) { ++self.drops; continue; }
@@ -156,6 +203,7 @@ struct ESP32WebRTC::Impl {
             }
             vTaskDelay(1);
         }
+        if (self.mediaTasks) xEventGroupWaitBits(self.done, self.mediaTasks, pdFALSE, pdTRUE, portMAX_DELAY);
         xEventGroupSetBits(self.done, PEER_DONE);
         vTaskDelete(nullptr);
     }
@@ -174,7 +222,8 @@ struct ESP32WebRTC::Impl {
             if(used!=frameSamples){++self.captureErrors;memset(pcm+used,0,(frameSamples-used)*sizeof(int16_t));}
             TxFrame frame{};frame.pts=pts;frame.captured=start;pts+=20;
             if(self.state!=State::Connected)continue; // Drain DMA, without spending CPU encoding before a call.
-            if(!self.microphone)memset(pcm,0,frameSamples*sizeof(int16_t));
+            const bool speaking=self.config.echoGateMs && esp_timer_get_time()-self.lastAudibleUs<int64_t(self.config.echoGateMs)*1000;
+            if(!self.microphone || speaking)memset(pcm,0,frameSamples*sizeof(int16_t));
             int64_t encodeStart=esp_timer_get_time();
             int encoded=self.codec.encode(pcm,frameSamples,frame.data,sizeof(frame.data));
             uint32_t elapsed=static_cast<uint32_t>(esp_timer_get_time()-encodeStart);
@@ -218,6 +267,11 @@ struct ESP32WebRTC::Impl {
                 nextPts=packet.pts+static_cast<uint32_t>(samples)*1000/format.sampleRate;decodedBefore=true;
             }
             self.playout.pop(pcm);
+            if(self.config.echoGateMs) {
+                int peak=0;
+                for(size_t i=0;i<frameSamples;++i){int v=pcm[i]<0?-pcm[i]:pcm[i];if(v>peak)peak=v;}
+                if(peak>self.config.echoGateLevel)self.lastAudibleUs=esp_timer_get_time();
+            }
             self.missing=self.playout.counters.missingSamples;
             self.late=self.playout.counters.late;self.resyncs=self.playout.counters.resync;
             size_t written=0;
@@ -241,6 +295,7 @@ struct ESP32WebRTC::Impl {
         free(playoutMemory);free(capturePcm);free(playbackPcm);free(decodePcm);
         if (done) vEventGroupDelete(done);
         for (auto p : strings) free(p);
+        free(channelLabel);
     }
 };
 bool ESP32WebRTC::begin(AudioIO& audio, const Config& cfg) {
@@ -257,15 +312,6 @@ bool ESP32WebRTC::begin(AudioIO& audio, const Config& cfg) {
     impl_ = new(memory) Impl;
     auto& s = *impl_;
     s.audio = &audio; s.config = cfg;
-    const auto caps=MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT;
-    const size_t pcmBytes=cfg.audio.frameSamples()*sizeof(int16_t);
-    s.playoutMemory=heap_caps_calloc(1,PlayoutBuffer::storageBytes(cfg.audio.sampleRate),caps);
-    s.capturePcm=static_cast<int16_t*>(heap_caps_malloc(pcmBytes,caps));
-    s.playbackPcm=static_cast<int16_t*>(heap_caps_malloc(pcmBytes,caps));
-    s.decodePcm=static_cast<int16_t*>(heap_caps_malloc(cfg.audio.maxDecodeSamples()*sizeof(int16_t),caps));
-    if(!s.playoutMemory || !s.capturePcm || !s.playbackPcm || !s.decodePcm ||
-       !s.playout.init(cfg.audio.sampleRate,s.playoutMemory,PlayoutBuffer::storageBytes(cfg.audio.sampleRate),cfg.prefillMs)) { end(); return false; }
-    if(!s.codec.begin(cfg.audio)){lastBeginError_=s.codec.lastOpenError();end();return false;}
     s.incoming = xQueueCreate(4, sizeof(Signal)); s.outgoing = xQueueCreate(4, sizeof(Signal));
     s.tx = xQueueCreate(3, sizeof(TxFrame)); s.rx=xQueueCreate(4,sizeof(RxFrame)); s.done = xEventGroupCreate();
     if (!s.incoming || !s.outgoing || !s.tx || !s.rx || !s.done) { end(); return false; }
@@ -277,15 +323,16 @@ bool ESP32WebRTC::begin(AudioIO& audio, const Config& cfg) {
         }
         s.servers[i] = {s.strings[i*3], s.strings[i*3+1], s.strings[i*3+2]};
     }
-    s.defaults.agent_recv_timeout = 10;
-    s.defaults.max_candidates = 4;
+    s.defaults.agent_recv_timeout = 100; // ms; a WAN DTLS handshake needs round trips well above 10 ms
+    s.defaults.max_candidates = 8; // OpenAI Realtime answers with six (UDP+TCP on three IPs)
     s.defaults.rtp_cfg.audio_recv_jitter.cache_size = 4096;
     s.defaults.rtp_cfg.audio_recv_jitter.cache_timeout = 60;
     s.defaults.rtp_cfg.send_pool_size = 6144;
     s.defaults.rtp_cfg.send_queue_num = 24;
     s.defaults.keep_role = true;
     auto& pc = s.peerConfig;
-    pc.server_lists = s.servers; pc.server_num = cfg.serverCount;
+    // esp_peer rejects a non-null server list with server_num == 0.
+    pc.server_lists = cfg.serverCount ? s.servers : nullptr; pc.server_num = cfg.serverCount;
     pc.role = cfg.offerer ? ESP_PEER_ROLE_CONTROLLING : ESP_PEER_ROLE_CONTROLLED;
     pc.ice_trans_policy = cfg.relayOnly ? ESP_PEER_ICE_TRANS_POLICY_RELAY : ESP_PEER_ICE_TRANS_POLICY_ALL;
     pc.audio_info.codec = cfg.audio.codec==AudioCodecType::Opus ? ESP_PEER_AUDIO_CODEC_OPUS : ESP_PEER_AUDIO_CODEC_G711U;
@@ -296,21 +343,19 @@ bool ESP32WebRTC::begin(AudioIO& audio, const Config& cfg) {
     pc.extra_cfg = &s.defaults; pc.extra_size = sizeof(s.defaults); pc.ctx = &s;
     pc.on_state = Impl::onState; pc.on_msg = Impl::onMessage;
     pc.on_audio_info = Impl::onAudioInfo; pc.on_audio_data = Impl::onAudio;
+    if (cfg.dataChannel) {
+        s.channelLabel = strdup(cfg.dataChannel);
+        if (!s.channelLabel) { end(); return false; }
+        pc.enable_data_channel = true; pc.manual_ch_create = true; pc.on_data = Impl::onData;
+        // esp_peer defaults both caches to 100 kB, far beyond a PSRAM-less heap.
+        s.defaults.data_ch_cfg.send_cache_size = 2048;
+        s.defaults.data_ch_cfg.recv_cache_size = cfg.dataReceiveBuffer;
+    }
     int rc = esp_peer_open(&pc, esp_peer_get_default_impl(), &s.peer);
     if (rc) { lastBeginError_ = rc; end(); return false; }
     s.running = true; s.state = State::Connecting;
-    // Leave Wi-Fi on core 0 and audio on core 1 on both supported dual-core chips.
-    struct Worker { TaskFunction_t fn; const char* name; uint32_t stack; UBaseType_t priority; BaseType_t core; EventBits_t bit; };
-    const bool opus=cfg.audio.codec==AudioCodecType::Opus;
-    Worker tasks[] = {{Impl::peerTask,"rtc_peer",10240,5,0,PEER_DONE},
-                      {Impl::captureTask,"rtc_capture",opus ? 40960u : 6144u,6,1,CAPTURE_DONE},
-                      {Impl::playbackTask,"rtc_play",opus ? 16384u : 6144u,7,1,PLAY_DONE}};
-    for (auto& task : tasks) {
-        if (xTaskCreatePinnedToCore(task.fn, task.name, task.stack, &s, task.priority, nullptr, task.core) != pdPASS) {
-            end(UINT32_MAX); return false;
-        }
-        s.launched |= task.bit;
-    }
+    if (xTaskCreatePinnedToCore(Impl::peerTask, "rtc_peer", 10240, &s, 5, nullptr, 0) != pdPASS) { end(UINT32_MAX); return false; }
+    s.launched = PEER_DONE; // peerTask starts the audio tasks and waits for them before exiting
     lastBeginError_=0;
     return true;
 }

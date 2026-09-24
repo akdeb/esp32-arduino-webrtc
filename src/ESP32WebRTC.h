@@ -18,6 +18,8 @@ public:
     enum class SignalType { SDP, Candidate };
     enum class State { Stopped, Connecting, Connected, Disconnected, Failed };
     using SignalHandler = void (*)(SignalType, const char*, size_t, void*);
+    // Runs on the network task: copy what you need and return quickly; do not call rtc methods.
+    using DataHandler = void (*)(const uint8_t* data, size_t length, bool text, void* context);
     struct IceServer { const char* url = nullptr; const char* username = nullptr; const char* password = nullptr; };
     using Codec = AudioCodecType;
     struct Config {
@@ -25,9 +27,17 @@ public:
         bool offerer = false;
         bool relayOnly = false;
         uint16_t prefillMs = 60; // 20..120 ms, in 20 ms steps
+        // Half-duplex echo gate for speakers without AEC: send silence while playback is audible
+        // and for echoGateMs afterwards. 0 disables it (full duplex, allows barge-in).
+        uint16_t echoGateMs = 0;
+        int16_t echoGateLevel = 500; // peak sample level that counts as audible playback
         uint8_t serverCount = 0;
         IceServer servers[3]{}; // copied by begin()
         SignalHandler onSignal = nullptr; // dispatched only from poll()
+        // Optional SCTP data channel, opened by this side once connected (e.g. "oai-events").
+        const char* dataChannel = nullptr; // copied by begin()
+        DataHandler onData = nullptr;
+        uint16_t dataReceiveBuffer = 8192; // bytes; the largest message this side can reassemble
         void* context = nullptr;
     };
     struct Stats {
