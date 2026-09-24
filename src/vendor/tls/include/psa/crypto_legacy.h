@@ -1,0 +1,88 @@
+/**
+ * \file psa/crypto_legacy.h
+ *
+ * \brief Add temporary suppport for deprecated symbols before they are
+ *        removed from the library.
+ *
+ * AWRTC_PSA_WANT_KEY_TYPE_xxx_KEY_PAIR and AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_xxx_KEY_PAIR
+ * symbols are deprecated.
+ * New symols add a suffix to that base name in order to clearly state what is
+ * the expected use for the key (use, import, export, generate, derive).
+ * Here we define some backward compatibility support for uses stil using
+ * the legacy symbols.
+ */
+/*
+ *  Copyright The Mbed TLS Contributors
+ *  SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
+ */
+
+#ifndef AWRTC_MBEDTLS_PSA_CRYPTO_LEGACY_H
+#define AWRTC_MBEDTLS_PSA_CRYPTO_LEGACY_H
+
+#if defined(AWRTC_PSA_WANT_KEY_TYPE_ECC_KEY_PAIR) //no-check-names
+#if !defined(AWRTC_PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_BASIC)
+#define AWRTC_PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_BASIC      1
+#endif
+#if !defined(AWRTC_PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_IMPORT)
+#define AWRTC_PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_IMPORT   1
+#endif
+#if !defined(AWRTC_PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_EXPORT)
+#define AWRTC_PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_EXPORT   1
+#endif
+#if !defined(AWRTC_PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_GENERATE)
+#define AWRTC_PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_GENERATE 1
+#endif
+#if !defined(AWRTC_PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_DERIVE)
+#define AWRTC_PSA_WANT_KEY_TYPE_ECC_KEY_PAIR_DERIVE   1
+#endif
+#endif
+
+#if defined(AWRTC_PSA_WANT_KEY_TYPE_RSA_KEY_PAIR) //no-check-names
+#if !defined(AWRTC_PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_BASIC)
+#define AWRTC_PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_BASIC      1
+#endif
+#if !defined(AWRTC_PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_IMPORT)
+#define AWRTC_PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_IMPORT   1
+#endif
+#if !defined(AWRTC_PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_EXPORT)
+#define AWRTC_PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_EXPORT   1
+#endif
+#if !defined(AWRTC_PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_GENERATE)
+#define AWRTC_PSA_WANT_KEY_TYPE_RSA_KEY_PAIR_GENERATE 1
+#endif
+#endif
+
+#if defined(AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_ECC_KEY_PAIR) //no-check-names
+#if !defined(AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_ECC_KEY_PAIR_BASIC)
+#define AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_ECC_KEY_PAIR_BASIC
+#endif
+#if !defined(AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_ECC_KEY_PAIR_IMPORT)
+#define AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_ECC_KEY_PAIR_IMPORT
+#endif
+#if !defined(AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_ECC_KEY_PAIR_EXPORT)
+#define AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_ECC_KEY_PAIR_EXPORT
+#endif
+#if !defined(AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_ECC_KEY_PAIR_GENERATE)
+#define AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_ECC_KEY_PAIR_GENERATE
+#endif
+#if !defined(AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_ECC_KEY_PAIR_DERIVE)
+#define AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_ECC_KEY_PAIR_DERIVE
+#endif
+#endif
+
+#if defined(AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_RSA_KEY_PAIR) //no-check-names
+#if !defined(AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_RSA_KEY_PAIR_BASIC)
+#define AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_RSA_KEY_PAIR_BASIC
+#endif
+#if !defined(AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_RSA_KEY_PAIR_IMPORT)
+#define AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_RSA_KEY_PAIR_IMPORT
+#endif
+#if !defined(AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_RSA_KEY_PAIR_EXPORT)
+#define AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_RSA_KEY_PAIR_EXPORT
+#endif
+#if !defined(AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_RSA_KEY_PAIR_GENERATE)
+#define AWRTC_MBEDTLS_PSA_ACCEL_KEY_TYPE_RSA_KEY_PAIR_GENERATE
+#endif
+#endif
+
+#endif /* AWRTC_MBEDTLS_PSA_CRYPTO_LEGACY_H */

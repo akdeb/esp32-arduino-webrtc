@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ESP32 WebRTC audio</title>
+<style>
+body{font:17px system-ui;max-width:720px;margin:64px auto;padding:0 24px;background:#111820;color:#e5eff9}
+h1{font-size:32px}p{line-height:1.6;color:#acbdce}button{font:inherit;padding:12px 20px;margin:8px 8px 8px 0;border:0;border-radius:8px;cursor:pointer}button:disabled{opacity:.4}#start{background:#83e8c0}pre{white-space:pre-wrap;background:#1b2632;padding:20px;border-radius:12px;font-size:13px}label{display:block;margin:20px 0}audio{width:100%;margin:20px 0}
+</style>
+<h1>ESP32 WebRTC audio</h1>
+<p>Two-way I2S audio over a WebRTC peer connection. The default is Opus with 24 kHz audio on the ESP32. Use headphones or low speaker volume: acoustic echo cancellation is not implemented on the ESP32.</p>
+<p id="format">Audio format is read from the board when a call starts.</p>
+<button id="start">Start call</button><button id="stop" disabled>End call</button>
+<label><input id="mic" type="checkbox" checked> ESP32 microphone enabled</label>
+<audio id="remote" autoplay controls></audio>
+<pre id="status" role="status">Ready. The board and this computer must be on the same LAN.</pre>
+<pre id="stats">No audio statistics yet.</pre>
+<script src="sdp.js"></script>
+<script src="app.js"></script>
+</html>

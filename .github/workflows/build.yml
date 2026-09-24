@@ -1,0 +1,35 @@
+name: build
+on: [push, pull_request]
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./test/run.sh
+      - run: ./test/tls_smoke.sh
+      - run: ./test/srtp_smoke.sh
+      - run: node --check browser/app.js
+      - run: node test/sdp_test.js
+      - run: python3 -m py_compile tools/demo_server.py tools/package.py tools/vendor.py
+  platformio:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        board: [esp32, esp32s3, esp32s3_16k, esp32s3_48k, esp32s3_g711]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install platformio==6.1.19
+      - run: pio run -e ${{ matrix.board }}
+  arduino:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+      - run: arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+      - run: arduino-cli core install esp32:esp32@3.1.3 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+      - run: arduino-cli compile --fqbn esp32:esp32:esp32s3:PSRAM=disabled,PartitionScheme=huge_app --library . examples/BrowserAudio
+      - run: arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=huge_app --library . examples/BrowserAudio
+      - run: arduino-cli compile --fqbn esp32:esp32:esp32s3:PSRAM=disabled,PartitionScheme=huge_app --library . examples/CodecSelfTest
