@@ -28,7 +28,7 @@ This release does **not** include device-side acoustic echo cancellation or vide
 ## Arduino IDE
 
 1. Install **esp32 by Espressif Systems 3.1.3** in Boards Manager. Arduino 2.x cores are not supported. Later 3.x versions need separate qualification.
-2. Install `dist/ESP32-Arduino-WebRTC-0.2.0.zip` using **Sketch → Include Library → Add .ZIP Library**. All transport dependencies are inside the ZIP.
+2. Install `dist/ESP32-Arduino-WebRTC-0.3.0.zip` using **Sketch → Include Library → Add .ZIP Library**. All transport dependencies are inside the ZIP.
 3. Select **ESP32S3 Dev Module** or **ESP32 Dev Module**. Disable PSRAM for the first test. Select a partition scheme with at least a 2 MB application slot; **Huge APP** works for the example.
 4. Open **File → Examples → ESP32 Arduino WebRTC → BrowserAudio**.
 5. Set the Wi-Fi credentials and I2S pins, compile and upload. Open Serial Monitor at 115200 baud.

@@ -1,6 +1,6 @@
 {
   "name": "ESP32-Arduino-WebRTC",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Arduino WebRTC audio with isolated DTLS and bounded I2S buffers",
   "keywords": ["webrtc", "esp32", "i2s", "audio"],
   "frameworks": "arduino",

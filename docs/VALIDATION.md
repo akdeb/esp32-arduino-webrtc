@@ -43,4 +43,4 @@ Do not label this library “ESP-IDF-level stable” until these tests have been
 
 ## Higher-rate qualification
 
-The 0.2 profiles use 24 kHz Opus by default, with 16 and 48 kHz options. Full-duplex operation without PSRAM, actual codec timings, audio quality, and Opus/browser interoperability remain unmeasured until run on a physical ESP32. The on-device self-test is supplied for that purpose and has only been compiled here.
+The 0.2 profiles use 24 kHz Opus by default, with 16 and 48 kHz options. The 24 kHz profile has been measured on an ESP32-S3 without PSRAM (see Hardware results). The 16 and 48 kHz profiles have only been exercised by `CodecSelfTest`, not in calls.
