@@ -1,5 +1,7 @@
 # ESP32 Arduino WebRTC
 
+[![ESP32-S3 in a voice call with OpenAI GPT-Live](docs/demo.jpg)](https://youtu.be/z2dDkeWZtTk)
+
 An experimental, self-contained Arduino library for **two-way WebRTC audio on ESP32 and ESP32-S3**, with I2S microphone input and speaker output. Designed to run without PSRAM. Calls voice AI services directly (OpenAI GPT-Live, WHIP, Pipecat or your own server), and includes a browser calling example.
 
 **This is an early prototype, not a qualified stable release.** It has been run on one ESP32-S3-WROOM board without PSRAM: LAN calls with Chrome, and multi-minute calls straight to OpenAI (`gpt-realtime` and `gpt-live-1`) over a phone hotspot. Standard ESP32, other browsers, TURN, and long soak tests are untested. See [validation](docs/VALIDATION.md).
