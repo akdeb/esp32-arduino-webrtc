@@ -5,5 +5,5 @@
   "keywords": ["webrtc", "esp32", "i2s", "audio"],
   "frameworks": "arduino",
   "platforms": "espressif32",
-  "build": {"extraScript": "tools/platformio.py"}
+  "build": {"extraScript": "tools/platformio.py", "libLDFMode": "deep+"}
 }

@@ -49,10 +49,12 @@ size_t WebRTCI2S::read(int16_t* out, size_t n, uint32_t timeout) {
     for (size_t i = 0; i < samples; ++i) out[i] = static_cast<int16_t>(rxWords_[2*i + (right_ ? 1 : 0)] >> 16);
     return samples;
 }
+void WebRTCI2S::setVolume(uint8_t percent) { gain_ = 65536 * std::min<int32_t>(percent, 100) / 100; }
 size_t WebRTCI2S::write(const int16_t* in, size_t n, uint32_t timeout) {
     if (!tx_ || !in) return 0;
     n = std::min(n, size_t(160));
-    for (size_t i = 0; i < n; ++i) txWords_[2*i] = txWords_[2*i+1] = static_cast<int32_t>(in[i]) * 65536;
+    int32_t gain = gain_.load(std::memory_order_relaxed);
+    for (size_t i = 0; i < n; ++i) txWords_[2*i] = txWords_[2*i+1] = static_cast<int32_t>(in[i]) * gain;
     size_t bytes = 0;
     i2s_channel_write(tx_, txWords_, n * 8, &bytes, timeout);
     return bytes / 8;

@@ -71,6 +71,9 @@ void setup() {
     pinMode(WEBRTC_AMP_ENABLE_PIN, OUTPUT); digitalWrite(WEBRTC_AMP_ENABLE_PIN, HIGH);
 #endif
     if (!audio.begin(pins, makeConfig().audio.sampleRate)) { Serial.println("I2S initialization failed"); return; }
+#ifdef WEBRTC_VOLUME
+    audio.setVolume(WEBRTC_VOLUME);
+#endif
     // LAN development example; signaling is proxied from localhost.
     server.on("/config", HTTP_GET, [] {
         auto format = makeConfig().audio;

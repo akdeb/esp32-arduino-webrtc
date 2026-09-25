@@ -1,6 +1,6 @@
 # ESP32 Arduino WebRTC
 
-An experimental, self-contained Arduino library for **two-way WebRTC audio on ESP32 and ESP32-S3**, with I2S microphone input and speaker output. Designed to run without PSRAM. Includes a browser calling example and a direct **OpenAI Realtime / GPT-Live** voice example.
+An experimental, self-contained Arduino library for **two-way WebRTC audio on ESP32 and ESP32-S3**, with I2S microphone input and speaker output. Designed to run without PSRAM. Calls voice AI services directly (OpenAI GPT-Live, WHIP, Pipecat or your own server), and includes a browser calling example.
 
 **This is an early prototype, not a qualified stable release.** It has been run on one ESP32-S3-WROOM board without PSRAM: LAN calls with Chrome, and multi-minute calls straight to OpenAI (`gpt-realtime` and `gpt-live-1`) over a phone hotspot. Standard ESP32, other browsers, TURN, and long soak tests are untested. See [validation](docs/VALIDATION.md).
 
@@ -19,6 +19,7 @@ An experimental, self-contained Arduino library for **two-way WebRTC audio on ES
 - Rate-sized internal-RAM application buffers, microphone mute, and memory/drop/error/codec-timing counters.
 - Compressed receive packets are decoded on the playback task; the peer callback only copies them into a bounded queue.
 - The codec, PCM buffers and audio tasks are allocated when the remote SDP arrives, so HTTPS signaling (about 40 KB of TLS) fits in the heap while the offer is exchanged.
+- `VoiceCall` + `HttpSignaling`: outgoing calls to any service that answers an SDP offer over one HTTP(S) POST, with OpenAI, WHIP and JSON presets.
 - An optional SCTP **data channel** (`Config.dataChannel` / `onData`) with small caches, used for OpenAI's `oai-events` channel.
 - An optional half-duplex **echo gate** (`Config.echoGateMs`) that sends silence while the speaker is playing, for boards without AEC.
 - Separate microphone and speaker I2S buses (`Pins.micBclk` / `micWs`), for boards that wire them independently.
@@ -94,24 +95,46 @@ The localhost bridge carries SDP and statistics over HTTP. **Audio travels direc
 
 The demo uses an unauthenticated LAN-only HTTP signaling endpoint. It is a development example; for a deployed device, supply authenticated signaling. The library accepts SDP and ICE candidates from your existing HTTP, MQTT, or WebSocket signaling service. STUN/TURN settings are available in `Config`; cross-network behavior and UDP TURN have not been tested in this release. TURNS is not exposed by this wrapper because a TURN CA configuration API is not yet provided.
 
-## Call OpenAI directly
+## Call a voice AI service
 
-`examples/OpenAIRealtime` is a voice call from the board straight to OpenAI, with no computer or relay. The board creates the SDP offer, POSTs it to OpenAI over HTTPS, and applies the answer; audio then flows over WebRTC between the board and OpenAI's media servers. No STUN server is needed because OpenAI's servers have public addresses.
+Most WebRTC voice AI services use the same signaling: POST the SDP offer over HTTPS, get the answer back. `VoiceCall` does that for you. It creates the offer, POSTs it from `poll()`, and applies the answer. Audio then flows directly between the board and the service.
 
-| Model | Endpoint | Notes |
-|---|---|---|
-| `gpt-live-1` (default) | `POST /v1/live/sessions`, JSON | Opens the `oai-events` data channel; event types print to Serial |
-| `gpt-realtime` | `POST /v1/realtime/calls`, multipart | Voice is set with `OPENAI_VOICE` |
+```cpp
+#include <VoiceCall.h>
+#include <WebRTCI2S.h>
 
-Set Wi-Fi and the key at build time; they come from the environment and are not written to any file:
+WebRTCI2S audio;
+VoiceCall call;
 
-```sh
-PLATFORMIO_SRC_DIR=examples/OpenAIRealtime \
-WIFI_SSID="my network" WIFI_PASSWORD="..." OPENAI_API_KEY="sk-..." \
-pio run -e esp32s3_elato_openai -t upload
+// setup(), after Wi-Fi and audio.begin(pins, 24000):
+ESP32WebRTC::Config cfg;               // Opus 24 kHz by default
+cfg.echoGateMs = 400;                  // for speakers without AEC
+call.begin(audio, cfg, HttpSignaling::openai(apiKey, "meridian", "Keep replies short."));
+
+// loop():
+call.poll();                           // call.state(), call.error(), call.rtc().stats()
 ```
 
-Use `PLATFORMIO_BUILD_FLAGS='-DOPENAI_MODEL=\"gpt-realtime\"'` to select the other API. In the Arduino IDE, define `WEBRTC_WIFI_SSID`, `WEBRTC_WIFI_PASSWORD` and `OPENAI_API_KEY` at the top of the sketch instead. The board calls on boot; send `c` over Serial to call again and `s` to hang up.
+| Preset | Request | Answer |
+|---|---|---|
+| `HttpSignaling::openai(key, voice, instructions)` | OpenAI GPT-Live (below) | parsed from the response |
+| `HttpSignaling::whip(url, token)` | raw `application/sdp` | response body |
+| `HttpSignaling::json(url, token)` | `{"type":"offer","sdp":...}`, e.g. Pipecat `/api/offer` | `"sdp"` field of the JSON response |
+
+For other services, set `url`, `headers`, `contentType`, and the `buildBody` / `parseAnswer` callbacks yourself. `http://` URLs work for servers on your LAN. For `https://`, set `caCert` to verify the server. Otherwise the certificate isn't checked. A service that needs a data channel sets `signaling.dataChannel`, and your `cfg.onData` receives its messages. WebSocket-signaled services (for example LiveKit) aren't covered: use `ESP32WebRTC` with your own signaling (see [Minimal API](#minimal-api)).
+
+### OpenAI
+
+`examples/GPTLive` calls `gpt-live-1` directly from the board (`POST /v1/live/sessions`), with no computer or relay. No STUN server is needed because OpenAI's servers have public addresses. Event types from the `oai-events` data channel print to Serial. The older `gpt-realtime` API isn't supported.
+
+Put Wi-Fi and the key in `.env`, which git ignores. Environment variables with the same names override it:
+
+```sh
+cp .env.example .env   # fill in WIFI_SSID, WIFI_PASSWORD, OPENAI_API_KEY, optional OPENAI_VOICE
+PLATFORMIO_SRC_DIR=examples/GPTLive pio run -e esp32s3_elato_gptlive -t upload
+```
+
+Set `VOLUME` (0–100) for speaker volume and `OPENAI_VOICE` to pick a voice; OpenAI's default is used otherwise. Male voices: `meridian`, `vesper`, `stone`, `ripple`, `cinder`, `tempo`, `beacon`. Female voices: `gleam`, `quartz`, `willow`, `delta`, `bossa`. The Arduino IDE doesn't read `.env`; define `WEBRTC_WIFI_SSID`, `WEBRTC_WIFI_PASSWORD` and `OPENAI_API_KEY` at the top of the sketch instead. The board calls on boot; send `c` over Serial to call again and `s` to hang up.
 
 **This is a development example.** The API key is compiled into the firmware, so anyone with the device can read it, and TLS skips certificate verification. For a product, have your server create the session (or a short-lived client secret) and give the board only that.
 
@@ -185,6 +208,7 @@ void sendSignal(ESP32WebRTC::SignalType type,
 // In loop(): rtc.poll();
 // On incoming SDP: rtc.remoteSignal(ESP32WebRTC::SignalType::SDP, data, length);
 // For push-to-talk: rtc.setMicrophoneEnabled(false);
+// Speaker volume, 0..100: audio.setVolume(60);
 // Before destroying audio: wait until rtc.end() returns true, then audio.end().
 ```
 

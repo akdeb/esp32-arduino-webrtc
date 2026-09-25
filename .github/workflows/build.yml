@@ -33,3 +33,4 @@ jobs:
       - run: arduino-cli compile --fqbn esp32:esp32:esp32s3:PSRAM=disabled,PartitionScheme=huge_app --library . examples/BrowserAudio
       - run: arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=huge_app --library . examples/BrowserAudio
       - run: arduino-cli compile --fqbn esp32:esp32:esp32s3:PSRAM=disabled,PartitionScheme=huge_app --library . examples/CodecSelfTest
+      - run: arduino-cli compile --fqbn esp32:esp32:esp32s3:PSRAM=disabled,PartitionScheme=huge_app --library . examples/GPTLive
